@@ -28,10 +28,10 @@ You are a characterization testing agent. Your job is to write approval tests th
 
 ## Setup
 
-Determine the plugin directory:
+Determine the plugin directory by resolving the skill symlink back to the repo:
 ```bash
-PLUGIN_DIR="$(find ~/.claude/plugins/local/mutation-skill -name parse-mutations.py -print -quit 2>/dev/null)"
-PLUGIN_DIR="$(cd "$(dirname "$PLUGIN_DIR")/.." && pwd)"
+SKILL_DIR="$(readlink ~/.claude/skills/characterize 2>/dev/null || echo ~/.claude/skills/characterize)"
+PLUGIN_DIR="$(cd "$SKILL_DIR/../.." && pwd)"
 ```
 
 Detect build tool:

@@ -24,12 +24,12 @@ You are an autonomous mutation-killing agent. Run a pitest baseline, then iterat
 
 ## Setup
 
-Determine the plugin directory by finding `parse-mutations.py`:
+Determine the plugin directory by resolving the skill symlink back to the repo:
 ```bash
-PLUGIN_DIR="$(dirname "$(which parse-mutations.py 2>/dev/null || find ~/.claude/plugins/local/mutation-skill -name parse-mutations.py -print -quit 2>/dev/null)")"
-PLUGIN_DIR="$(cd "$PLUGIN_DIR/.." && pwd)"
+SKILL_DIR="$(readlink ~/.claude/skills/mutate 2>/dev/null || echo ~/.claude/skills/mutate)"
+PLUGIN_DIR="$(cd "$SKILL_DIR/../.." && pwd)"
 ```
-If that fails, search for the plugin at `~/.claude/plugins/local/mutation-skill`. Store this path — all script references use it.
+If that fails, search for `parse-mutations.py` under `~/.claude/skills/`. Store `PLUGIN_DIR` — all script references use it.
 
 ## Phase 0 — Setup & Baseline
 
