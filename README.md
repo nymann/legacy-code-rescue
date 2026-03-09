@@ -5,18 +5,21 @@ A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skills toolkit f
 ```mermaid
 flowchart LR
     subgraph find-seam["/find-seam"]
+        direction TB
         A1[User describes change goal] --> A2[Explore codebase together]
         A2 --> A3[Map change surface]
         A3 --> A4[Create targeted seams]
     end
 
     subgraph characterize["/characterize"]
+        direction TB
         B1[Read source code] --> B2[Write combination<br/>approval tests]
         B2 --> B3[Run & approve output]
         B3 --> B4[Commit safety net]
     end
 
     subgraph mutate["/mutate"]
+        direction TB
         C1[Run pitest baseline] --> C2[Pick surviving mutation]
         C2 --> C3[Write targeted test]
         C3 --> C4{Killed?}
