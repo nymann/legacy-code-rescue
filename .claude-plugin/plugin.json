@@ -1,0 +1,5 @@
+{
+  "name": "legacy-code-rescue",
+  "version": "0.2.0",
+  "description": "Legacy code rescue toolkit: /find-seam to make code testable, /characterize to pin behavior with approval tests, /mutate to kill surviving mutations."
+}
