@@ -22,11 +22,13 @@ flowchart LR
         direction TB
         C1[Run pitest baseline] --> C2[Pick surviving mutation]
         C2 --> C3[Write targeted test]
+        C5[Commit] ~~~ C3 ~~~ C6[Retry or skip]
         C3 --> C4{Killed?}
-        C5[Commit] --> C2
-        C6[Retry or skip] --> C2
+        C5 ~~~ C4 ~~~ C6
         C4 -- Yes --> C5
         C4 -- No --> C6
+        C5 --> C2
+        C6 --> C2
     end
 
     find-seam --> characterize --> mutate
