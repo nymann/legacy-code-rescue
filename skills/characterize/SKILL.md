@@ -77,7 +77,7 @@ BUILD_TOOL=$(bash "$PLUGIN_DIR/scripts/detect-build-tool.sh")
 
 3. Verify it resolves:
    ```bash
-   mvn dependency:resolve -q  # or ./gradlew dependencies --configuration testCompileClasspath -q
+   ./mvnw dependency:resolve -q  # or ./gradlew dependencies --configuration testCompileClasspath -q (use ./mvnw if present, else mvn)
    ```
 
 ## Phase 2 — Write Characterization Tests
@@ -141,7 +141,7 @@ class GildedRoseCharacterizationTest {
 
 1. Run the characterization tests (they will fail on first run — no approved file yet):
    ```bash
-   mvn test -pl . -Dtest={TestClassName} -DfailIfNoTests=false 2>&1 | tail -5
+   ./mvnw test -pl . -Dtest={TestClassName} -DfailIfNoTests=false 2>&1 | tail -5
    ```
 
 2. The first run creates a `.received.txt` file. This captures actual behavior.
@@ -153,7 +153,7 @@ class GildedRoseCharacterizationTest {
 
 4. Run tests again — they should now pass:
    ```bash
-   mvn test -pl . -Dtest={TestClassName}
+   ./mvnw test -pl . -Dtest={TestClassName}
    ```
 
 5. If tests fail after approval, investigate: non-determinism (timestamps, random), ordering issues, or environment dependencies. Fix the test to be deterministic.

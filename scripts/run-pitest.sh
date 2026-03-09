@@ -6,9 +6,16 @@ TARGET_CLASS="$2"
 TEST_CLASS="$3"
 MUTATORS="${4:-}"
 
+# Prefer wrapper scripts if available
+if [ -f ./mvnw ]; then
+  MVN=./mvnw
+else
+  MVN=mvn
+fi
+
 case "$BUILD_TOOL" in
   maven)
-    CMD=(mvn test pitest:mutationCoverage
+    CMD=("$MVN" test pitest:mutationCoverage
       -DtargetClasses="$TARGET_CLASS"
       -DtargetTests="$TEST_CLASS"
       -DoutputFormats=XML

@@ -52,7 +52,7 @@ If that fails, search for `parse-mutations.py` under `~/.claude/skills/`. Store 
 
 4. **If no baseline exists:**
    - Run full pitest:
-     - Maven: `mvn test pitest:mutationCoverage -DoutputFormats=XML -DtimestampedReports=false`
+     - Maven: `./mvnw test pitest:mutationCoverage -DoutputFormats=XML -DtimestampedReports=false` (use `./mvnw` if present, else `mvn`)
      - Gradle: `./gradlew pitest`
    - Create `.pitest-baseline/` directory (add it to `.gitignore` if not already there)
    - Copy the mutations.xml to `.pitest-baseline/mutations.xml`

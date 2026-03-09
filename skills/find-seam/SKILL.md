@@ -119,13 +119,13 @@ public class OrderProcessor {
 
 3. After each refactoring, verify it compiles:
    ```bash
-   mvn compile -q  # or ./gradlew compileJava -q
+   ./mvnw compile -q  # or ./gradlew compileJava -q (use ./mvnw if present, else mvn)
    ```
    If it doesn't compile, fix immediately.
 
 4. If existing tests exist, run them to confirm no behavioral change:
    ```bash
-   mvn test -q  # or ./gradlew test -q
+   ./mvnw test -q  # or ./gradlew test -q
    ```
 
 ## Phase 3 — Verify & Commit
