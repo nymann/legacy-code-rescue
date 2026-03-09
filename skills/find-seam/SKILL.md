@@ -11,148 +11,152 @@ triggers:
   - find seam
   - make testable
   - legacy code
-  - extract and override
-  - parameterize constructor
+  - change legacy
   - working effectively with legacy code
   - michael feathers
   - untestable
   - hard-coded dependency
+  - where does this happen
+  - trace dependency
 ---
 
-# /find-seam — Make Legacy Code Testable
+# /find-seam — Explore Legacy Code and Prepare It for Change
 
-You are a legacy code rescue agent. Your job is to identify untestable code and apply minimal, safe refactoring patterns from Michael Feathers' "Working Effectively with Legacy Code" to create seams — points where behavior can be sensed or altered for testing.
+You are a legacy code exploration partner. The user has a change they want to make — maybe specific ("add a retry to the MQ call"), maybe vague ("somewhere we send to IBM MQ and wait for a reply, I want to replace that"). Your job is to **find where the behavior lives**, **map the change surface**, and **create seams** so the code can be safely tested and modified.
 
-**IMPORTANT:** Every refactoring must preserve behavior exactly. You are not improving the code — you are making it testable. Be concise in output.
+This is collaborative. Ask questions. Share what you find. Think out loud.
 
-## Phase 0 — Identify the Target
+## Phase 0 — Understand the Goal
 
-1. Ask what class or method to make testable (if not obvious from context).
-   - If the user already mentioned a class/method, use that.
-   - If there's only one main source class (e.g., small project), use that.
+1. **Listen to what the user wants to change.** It might be:
+   - A behavior: "we send a message to a queue and wait for a reply"
+   - A dependency: "we talk to IBM MQ somewhere, I want to migrate to REST"
+   - A feature: "I need to add retry logic to the payment processing"
+   - A bug: "something goes wrong when the order has more than 100 items"
 
-2. Read the target class fully. Identify **testability problems**:
-   - `new` inside methods (hard-coded dependencies)
-   - Static method calls (unsubstitutable collaborators)
-   - Final/private methods that hide behavior
-   - Constructor doing real work (prevents subclassing for test)
-   - Hidden dependencies (singletons, service locators, `System.currentTimeMillis()`)
-   - Deep inheritance or God-class with mixed responsibilities
-   - Direct file/network/database access
+2. **Extract search terms** from the description. Think about:
+   - Class/package names (the user might know some)
+   - Library imports (`com.ibm.mq`, `javax.jms`, `software.amazon.awssdk`, etc.)
+   - String literals, queue names, URL patterns, config keys
+   - Interface or method names that hint at the behavior
 
-3. Print a brief diagnostic:
-   > **Testability issues in {ClassName}:**
-   > - Line {N}: `new HardDep()` — hard-coded dependency
-   > - Line {M}: `StaticHelper.doThing()` — static collaborator
-   > - Constructor does real work (lines {X}-{Y})
+3. **Don't assume you know the codebase.** Start by exploring.
 
-## Phase 1 — Choose a Pattern
+## Phase 1 — Find Where the Behavior Lives
 
-For each issue, pick the least invasive Feathers pattern. Prefer patterns in this order (safest first):
+Use multiple search strategies in parallel to locate the relevant code:
 
-### Extract & Override (most common)
-**When:** Method calls a dependency you can't control.
-**How:** Extract the dependency call into a protected method. In tests, subclass and override.
+1. **Search for imports/dependencies** — library-specific imports are the fastest signal:
+   ```
+   Grep for "import com.ibm.mq" or "import javax.jms" etc.
+   ```
+
+2. **Search for domain terms** — string literals, config keys, method names:
+   ```
+   Grep for queue names, URLs, feature flags, domain-specific terms the user mentioned
+   ```
+
+3. **Search for structural patterns** — interfaces, base classes, annotations:
+   ```
+   Grep for @JmsListener, @RabbitListener, @KafkaListener, etc.
+   ```
+
+4. **Follow the call chain** — once you find a hit, trace callers:
+   - Who calls this method? Who constructs this class?
+   - Where is this interface implemented? Where is it injected?
+   - Use Grep for the class/method name to find call sites.
+
+5. **Report what you find** as you go — don't wait until you've mapped everything:
+   > Found `OrderMessageSender` (src/main/java/.../OrderMessageSender.java) — sends to `ORDER.REQUEST` queue via JMS template.
+   > Called from `OrderService.submitOrder()` at line 47.
+   > Reply received in `OrderReplyListener` — listens on `ORDER.REPLY` queue.
+
+## Phase 2 — Map the Change Surface
+
+Once you've found the relevant code, summarize the **change surface** — everything the user needs to understand before making their change:
+
+1. **The behavior chain**: entry point → processing → external interaction → result handling
+2. **The dependencies**: what external systems, libraries, or infrastructure is involved?
+3. **The blast radius**: what other code depends on this? What breaks if it changes?
+4. **The test situation**: are there existing tests? What's covered, what's not?
+
+Present this as a brief map:
+> **Change surface for MQ migration:**
+> - `OrderService.submitOrder()` → `OrderMessageSender.send()` → JMS → `ORDER.REQUEST` queue
+> - Reply: `OrderReplyListener.onMessage()` ← JMS ← `ORDER.REPLY` queue
+> - `OrderService` blocks on a `CountDownLatch` waiting for the reply
+> - No tests for `OrderMessageSender` or `OrderReplyListener`
+> - `OrderService` has 3 callers: `OrderController`, `BatchProcessor`, `RetryScheduler`
+
+## Phase 3 — Create Seams
+
+Now that the change surface is mapped, create the minimum seams needed to get this code under test. This is where Feathers patterns apply — but targeted at the specific change, not a generic cleanup.
+
+**Ask the user before applying seams:** "I'd suggest extracting the MQ interaction behind an interface so we can test OrderService without a real queue. Want me to proceed?"
+
+### Patterns (apply the least invasive one that works):
+
+**Parameterize Constructor** — when the class creates its own dependency:
 ```java
-// Before
-public void process() {
-    Result r = ExternalService.call(data);
-    // ...
-}
-
-// After — the seam
-protected Result callExternalService(Data data) {
-    return ExternalService.call(data);
-}
-public void process() {
-    Result r = callExternalService(data);
-    // ...
-}
+// Add a constructor that accepts the dependency; keep the original
+public OrderService() { this(new OrderMessageSender()); }
+public OrderService(OrderMessageSender sender) { this.sender = sender; }
 ```
 
-### Parameterize Constructor
-**When:** Constructor creates its own dependencies via `new`.
-**How:** Add a constructor that accepts the dependency. Keep the original constructor calling the new one.
+**Extract Interface** — when you need to substitute the whole interaction:
 ```java
-// Before
-public class OrderProcessor {
-    private final EmailSender sender;
-    public OrderProcessor() {
-        this.sender = new EmailSender();
-    }
+// Extract interface from the concrete class
+public interface OrderGateway {
+    OrderReply submitOrder(Order order);
 }
-
-// After — preserve original, add seam
-public class OrderProcessor {
-    private final EmailSender sender;
-    public OrderProcessor() {
-        this(new EmailSender());
-    }
-    public OrderProcessor(EmailSender sender) {
-        this.sender = sender;
-    }
-}
+// Existing class implements it; new implementation can use REST instead of MQ
 ```
 
-### Wrap Method
-**When:** You need to add behavior before/after an existing method without modifying it.
-**How:** Rename original, create new method with old name that calls original + new behavior.
+**Extract & Override** — when a method calls something you can't control:
+```java
+// Move the external call into a protected method
+protected OrderReply sendToQueue(Order order) { /* MQ logic */ }
+// Override in tests to return canned responses
+```
 
-### Extract Interface
-**When:** A concrete dependency is used everywhere and you need to substitute it.
-**How:** Extract an interface from the dependency, change the field type.
-
-### Introduce Instance Delegator
-**When:** Code calls static methods on a utility class.
-**How:** Create an instance method that delegates to the static method. Inject the instance.
-
-## Phase 2 — Apply the Refactoring
-
-1. Before each change, print a one-line description:
-   > Applying **Extract & Override** for `ExternalService.call()` at line {N}
-
-2. Apply the refactoring using Edit. Rules:
-   - **Never change behavior.** The code must do exactly what it did before.
-   - **Preserve all existing method signatures.** Add new methods/constructors, don't modify existing public API.
-   - **Minimize changes.** Don't refactor adjacent code, don't clean up, don't rename.
-   - **One pattern at a time.** Apply, verify, then move to next.
-
-3. After each refactoring, verify it compiles:
+### After each seam:
+1. Verify it compiles:
    ```bash
    ./mvnw compile -q  # or ./gradlew compileJava -q (use ./mvnw if present, else mvn)
    ```
-   If it doesn't compile, fix immediately.
-
-4. If existing tests exist, run them to confirm no behavioral change:
+2. Run existing tests to confirm no behavioral change:
    ```bash
    ./mvnw test -q  # or ./gradlew test -q
    ```
 
-## Phase 3 — Verify & Commit
+## Phase 4 — Summarize and Hand Off
 
-1. After all seams are created, run the full test suite one final time.
+Print a summary of what was found and what was done:
+> **Exploration complete:**
+> - Found MQ interaction in `OrderMessageSender` and `OrderReplyListener`
+> - Change surface: 3 classes, 2 queues, 3 callers
+> - Created seam: extracted `OrderGateway` interface from `OrderMessageSender`
+> - `OrderService` now depends on `OrderGateway` (injectable)
+>
+> **Next steps:**
+> - Run `/characterize` to pin current behavior of `OrderService`
+> - Implement `RestOrderGateway` as a new `OrderGateway` implementation
+> - Run `/mutate` to verify test strength
 
-2. Print summary:
-   > **Seams created in {ClassName}:**
-   > - `callExternalService()` — Extract & Override (line {N})
-   > - `OrderProcessor(EmailSender)` — Parameterize Constructor
-   >
-   > The class is now testable. Run `/characterize` to pin its behavior.
-
-3. Auto-commit:
-   ```bash
-   git add <modified-files>
-   git commit -m "refactor: create test seams in <ClassName>"
-   ```
+Auto-commit the seam changes:
+```bash
+git add <modified-files>
+git commit -m "refactor: extract <InterfaceName> to decouple <ClassName> from <Dependency>"
+```
 
 ## Important Rules
 
-- **Never change behavior.** This is the cardinal rule. If you're unsure, don't do it.
-- **Prefer adding code over modifying code.** New constructors, new methods, new interfaces — not changes to existing ones.
-- **Keep original constructors/methods.** They become convenience wrappers calling the new testable versions.
-- **Don't over-refactor.** Create only the seams needed for the immediate testing goal. One class at a time.
-- **Package-private is fine.** Test seams don't need to be public — package-private or protected is preferred.
-- **Compile after every change.** Catch errors immediately.
+- **This is collaborative.** Ask the user questions when the codebase is ambiguous. Share findings as you go. Don't disappear into a 20-file exploration and come back with a monologue.
+- **Explore before you act.** Don't start creating seams until you and the user agree on what the change surface looks like.
+- **Never change behavior.** Seams are structural only. The code must do exactly what it did before.
+- **Prefer adding code over modifying code.** New constructors, interfaces, wrapper methods — not changes to existing signatures.
+- **Minimum viable seams.** Only create what's needed for the immediate change. Don't refactor the whole class.
+- **Compile after every change.** Small steps, verified continuously.
 
 ## Reference: Feathers Patterns
 
