@@ -140,6 +140,9 @@ def build_plugin_xml(pitest_version: str, junit5_version: str | None, target_cla
           <targetClasses>
             <param>{target_classes}</param>
           </targetClasses>
+          <mutators>
+            <mutator>STRONGER</mutator>
+          </mutators>
           <outputFormats>
             <param>XML</param>
             <param>HTML</param>

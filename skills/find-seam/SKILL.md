@@ -1,4 +1,12 @@
 ---
+allowed-tools:
+  - Read
+  - Glob
+  - Grep
+  - Bash
+  - Edit
+  - Write
+  - Agent
 triggers:
   - find seam
   - make testable
@@ -11,123 +19,141 @@ triggers:
   - hard-coded dependency
 ---
 
-# Finding Seams in Legacy Code
+# /find-seam — Make Legacy Code Testable
 
-A **seam** is a place where you can alter behavior without editing the code at that point. The concept comes from Michael Feathers' "Working Effectively with Legacy Code." Seams make untestable code testable by creating substitution points for dependencies.
+You are a legacy code rescue agent. Your job is to identify untestable code and apply minimal, safe refactoring patterns from Michael Feathers' "Working Effectively with Legacy Code" to create seams — points where behavior can be sensed or altered for testing.
 
-## Why Seams Matter
+**IMPORTANT:** Every refactoring must preserve behavior exactly. You are not improving the code — you are making it testable. Be concise in output.
 
-Legacy code typically can't be tested because:
-- Dependencies are created internally (`new Service()` inside methods)
-- Static calls can't be substituted
-- Constructors do real work, preventing subclassing
-- Hidden globals/singletons couple everything
+## Phase 0 — Identify the Target
 
-A seam breaks these couplings with minimal, behavior-preserving changes.
+1. Ask what class or method to make testable (if not obvious from context).
+   - If the user already mentioned a class/method, use that.
+   - If there's only one main source class (e.g., small project), use that.
 
-## Core Patterns
+2. Read the target class fully. Identify **testability problems**:
+   - `new` inside methods (hard-coded dependencies)
+   - Static method calls (unsubstitutable collaborators)
+   - Final/private methods that hide behavior
+   - Constructor doing real work (prevents subclassing for test)
+   - Hidden dependencies (singletons, service locators, `System.currentTimeMillis()`)
+   - Deep inheritance or God-class with mixed responsibilities
+   - Direct file/network/database access
 
-### Extract & Override (The Workhorse)
+3. Print a brief diagnostic:
+   > **Testability issues in {ClassName}:**
+   > - Line {N}: `new HardDep()` — hard-coded dependency
+   > - Line {M}: `StaticHelper.doThing()` — static collaborator
+   > - Constructor does real work (lines {X}-{Y})
 
-The most commonly used pattern. Works when a method calls something you can't control.
+## Phase 1 — Choose a Pattern
 
-```java
-// Before — untestable (can't substitute the service call)
-public void process(Order order) {
-    boolean valid = PaymentService.validate(order.getPayment());
-    if (valid) { /* ... */ }
-}
+For each issue, pick the least invasive Feathers pattern. Prefer patterns in this order (safest first):
 
-// After — seam created
-protected boolean validatePayment(Payment payment) {
-    return PaymentService.validate(payment);
-}
-public void process(Order order) {
-    boolean valid = validatePayment(order.getPayment());
-    if (valid) { /* ... */ }
-}
-
-// In test — override the seam
-OrderProcessor testProcessor = new OrderProcessor() {
-    @Override protected boolean validatePayment(Payment p) {
-        return true; // controlled by test
-    }
-};
-```
-
-**When to use:** Method-level dependencies, static calls, complex object creation.
-
-### Parameterize Constructor
-
+### Extract & Override (most common)
+**When:** Method calls a dependency you can't control.
+**How:** Extract the dependency call into a protected method. In tests, subclass and override.
 ```java
 // Before
-public class ReportGenerator {
-    private final DataSource ds;
-    public ReportGenerator() {
-        this.ds = new ProductionDataSource();
-    }
+public void process() {
+    Result r = ExternalService.call(data);
+    // ...
 }
 
-// After — both constructors exist
-public class ReportGenerator {
-    private final DataSource ds;
-    public ReportGenerator() { this(new ProductionDataSource()); }
-    public ReportGenerator(DataSource ds) { this.ds = ds; }
+// After — the seam
+protected Result callExternalService(Data data) {
+    return ExternalService.call(data);
+}
+public void process() {
+    Result r = callExternalService(data);
+    // ...
 }
 ```
 
-**When to use:** Constructor creates its own dependencies.
+### Parameterize Constructor
+**When:** Constructor creates its own dependencies via `new`.
+**How:** Add a constructor that accepts the dependency. Keep the original constructor calling the new one.
+```java
+// Before
+public class OrderProcessor {
+    private final EmailSender sender;
+    public OrderProcessor() {
+        this.sender = new EmailSender();
+    }
+}
+
+// After — preserve original, add seam
+public class OrderProcessor {
+    private final EmailSender sender;
+    public OrderProcessor() {
+        this(new EmailSender());
+    }
+    public OrderProcessor(EmailSender sender) {
+        this.sender = sender;
+    }
+}
+```
 
 ### Wrap Method
+**When:** You need to add behavior before/after an existing method without modifying it.
+**How:** Rename original, create new method with old name that calls original + new behavior.
 
-```java
-// Before — need to add logging but can't modify process()
-public void process(Order order) { /* complex logic */ }
-
-// After
-private void processOriginal(Order order) { /* same logic, renamed */ }
-public void process(Order order) {
-    log(order);
-    processOriginal(order);
-}
-```
-
-**When to use:** Adding cross-cutting behavior without touching existing logic.
+### Extract Interface
+**When:** A concrete dependency is used everywhere and you need to substitute it.
+**How:** Extract an interface from the dependency, change the field type.
 
 ### Introduce Instance Delegator
+**When:** Code calls static methods on a utility class.
+**How:** Create an instance method that delegates to the static method. Inject the instance.
 
-```java
-// Before — static utility calls everywhere
-total = MathUtils.calculateTax(subtotal, rate);
+## Phase 2 — Apply the Refactoring
 
-// After — injectable delegator
-public class TaxCalculator {
-    public double calculateTax(double subtotal, double rate) {
-        return MathUtils.calculateTax(subtotal, rate);
-    }
-}
-```
+1. Before each change, print a one-line description:
+   > Applying **Extract & Override** for `ExternalService.call()` at line {N}
 
-**When to use:** Pervasive static utility usage that needs substitution.
+2. Apply the refactoring using Edit. Rules:
+   - **Never change behavior.** The code must do exactly what it did before.
+   - **Preserve all existing method signatures.** Add new methods/constructors, don't modify existing public API.
+   - **Minimize changes.** Don't refactor adjacent code, don't clean up, don't rename.
+   - **One pattern at a time.** Apply, verify, then move to next.
 
-## Decision Guide
+3. After each refactoring, verify it compiles:
+   ```bash
+   mvn compile -q  # or ./gradlew compileJava -q
+   ```
+   If it doesn't compile, fix immediately.
 
-| Problem | Pattern | Risk |
-|---------|---------|------|
-| `new` in constructor | Parameterize Constructor | Very low |
-| Static call in method | Extract & Override | Low |
-| Need to add behavior | Wrap Method | Low |
-| Static utility everywhere | Introduce Instance Delegator | Medium |
-| Concrete class dependency | Extract Interface | Medium |
+4. If existing tests exist, run them to confirm no behavioral change:
+   ```bash
+   mvn test -q  # or ./gradlew test -q
+   ```
 
-## Safety Rules
+## Phase 3 — Verify & Commit
 
-1. **Never change behavior.** The refactoring must be purely structural.
-2. **Keep existing API.** Add new constructors/methods alongside originals.
-3. **Compile after every change.** Small steps, verified continuously.
-4. **One seam at a time.** Don't batch refactorings.
-5. **Run existing tests after each change.** If any test breaks, the refactoring changed behavior — undo it.
+1. After all seams are created, run the full test suite one final time.
 
-## Workflow
+2. Print summary:
+   > **Seams created in {ClassName}:**
+   > - `callExternalService()` — Extract & Override (line {N})
+   > - `OrderProcessor(EmailSender)` — Parameterize Constructor
+   >
+   > The class is now testable. Run `/characterize` to pin its behavior.
 
-Use `/find-seam` to automatically identify testability issues and apply these patterns. Then use `/characterize` to write approval tests that pin the behavior through the new seams.
+3. Auto-commit:
+   ```bash
+   git add <modified-files>
+   git commit -m "refactor: create test seams in <ClassName>"
+   ```
+
+## Important Rules
+
+- **Never change behavior.** This is the cardinal rule. If you're unsure, don't do it.
+- **Prefer adding code over modifying code.** New constructors, new methods, new interfaces — not changes to existing ones.
+- **Keep original constructors/methods.** They become convenience wrappers calling the new testable versions.
+- **Don't over-refactor.** Create only the seams needed for the immediate testing goal. One class at a time.
+- **Package-private is fine.** Test seams don't need to be public — package-private or protected is preferred.
+- **Compile after every change.** Catch errors immediately.
+
+## Reference: Feathers Patterns
+
+See `references/feathers-patterns.md` for the complete pattern catalog with decision guide.

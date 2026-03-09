@@ -7,6 +7,13 @@ allowed-tools:
   - Edit
   - Write
   - Agent
+triggers:
+  - mutation testing
+  - pitest
+  - surviving mutations
+  - mutation score
+  - kill mutations
+  - mutation coverage
 ---
 
 # /mutate — Autonomous Mutation Testing Loop
@@ -39,7 +46,7 @@ If that fails, search for the plugin at `~/.claude/plugins/local/mutation-skill`
      ```
      This detects the Java version, picks the right pitest version, adds JUnit 5 plugin if needed, and sets targetClasses from the groupId.
    - Print what was added (the script outputs a summary).
-   - Note: for Gradle, tell the user to add the plugin manually (print the snippet from SKILL.md) and stop.
+   - Note: for Gradle, tell the user to add the plugin manually and stop.
 
 3. Check if `.pitest-baseline/mutations.xml` exists in the project root.
 
@@ -73,7 +80,7 @@ This outputs JSON lines to stdout (one per surviving mutation, sorted: NO_COVERA
 
 1. Find the source file using Glob: `**/<sourceFile>` (from the mutation JSON).
 2. Read ~11 lines around the mutation: use Read with `offset: lineNumber - 5` and `limit: 11`.
-3. Read the mutator description from `$PLUGIN_DIR/skills/mutation-testing/references/mutator-descriptions.md` to understand what the mutator does.
+3. Read the mutator description from `$PLUGIN_DIR/skills/mutate/references/mutator-descriptions.md` to understand what the mutator does.
 4. Print a **one-line summary**:
    > Line {N} of {SourceFile}: pitest {mutator description}. Status: {status}.
 
@@ -159,3 +166,14 @@ This outputs JSON lines to stdout (one per surviving mutation, sorted: NO_COVERA
 - **Only commit test files.** Never commit source changes.
 - **Use targeted pitest runs** (Phase 4) — never re-run full pitest after the baseline.
 - **Preserve existing tests.** When editing test files, only add new methods — never modify or delete existing test methods.
+
+## Reference: Test-Writing Strategies
+
+- **Assert exact values**, not just non-null — kills MATH, PRIMITIVE_RETURNS
+- **Test boundary values** — kills CONDITIONALS_BOUNDARY (if `x >= 18`, test with 17 and 18)
+- **Test both branches** — kills NEGATE_CONDITIONALS
+- **Verify side effects** — kills VOID_METHOD_CALLS
+- **Avoid identity elements** — `x + 0 == x - 0` won't kill MATH
+- **Test return value content** — kills EMPTY_RETURNS, NULL_RETURNS
+
+See `references/mutator-descriptions.md` for the full mutator lookup table.

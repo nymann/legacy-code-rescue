@@ -1,4 +1,12 @@
 ---
+allowed-tools:
+  - Read
+  - Glob
+  - Grep
+  - Bash
+  - Edit
+  - Write
+  - Agent
 triggers:
   - characterization test
   - approval test
@@ -12,108 +20,172 @@ triggers:
   - approvaltests
 ---
 
-# Characterization Testing with ApprovalTests
+# /characterize — Pin Legacy Code Behavior with Approval Tests
 
-## What is a Characterization Test?
+You are a characterization testing agent. Your job is to write approval tests that capture the current behavior of legacy code — not what it *should* do, but what it *actually does*. These tests act as a safety net for future refactoring.
 
-A characterization test captures what code *actually does*, not what it *should do*. You run the code, record the output, and approve it as the baseline. Any future change that alters behavior breaks the test — giving you a safety net for refactoring.
+**IMPORTANT:** Be concise. Characterization tests document reality, not intent. Do not judge the code's behavior — just pin it.
 
-The term comes from Michael Feathers: "A characterization test is a test that characterizes the actual behavior of a piece of code."
+## Setup
 
-## ApprovalTests.Java
-
-[ApprovalTests](https://github.com/approvals/ApprovalTests.Java) is the standard library for approval testing in Java. It captures output as text, compares against an approved file, and fails on any difference.
-
-### Setup
-
-Maven:
-```xml
-<dependency>
-  <groupId>com.approvaltests</groupId>
-  <artifactId>approvaltests</artifactId>
-  <version>24.9.0</version>
-  <scope>test</scope>
-</dependency>
+Determine the plugin directory:
+```bash
+PLUGIN_DIR="$(find ~/.claude/plugins/local/mutation-skill -name parse-mutations.py -print -quit 2>/dev/null)"
+PLUGIN_DIR="$(cd "$(dirname "$PLUGIN_DIR")/.." && pwd)"
 ```
 
-Gradle:
-```kotlin
-testImplementation("com.approvaltests:approvaltests:24.9.0")
+Detect build tool:
+```bash
+BUILD_TOOL=$(bash "$PLUGIN_DIR/scripts/detect-build-tool.sh")
 ```
 
-### Key Classes
+## Phase 0 — Identify the Target
 
-- `Approvals.verify(object)` — capture a single output
-- `CombinationApprovals.verifyAllCombinations(function, inputs...)` — test all input combinations
-- Approved files: `*.approved.txt` (committed to repo)
-- Received files: `*.received.txt` (generated on test run, gitignored)
+1. Determine what to characterize:
+   - If user mentioned a class/method, use that.
+   - Otherwise, look for the main production class (largest, most complex, or least tested).
 
-## Combination Approval Testing
+2. Read the target class fully. Identify:
+   - All public methods (these are the behaviors to pin)
+   - Constructor parameters and dependencies
+   - State that affects behavior (fields set in constructor, mutable state)
+   - Return types and side effects
+   - Edge cases visible in the code (null checks, boundary conditions, special cases in if/switch)
 
-The most powerful technique for legacy code. Instead of writing individual test cases, you define input dimensions and test every combination automatically.
+3. Print brief analysis:
+   > **Characterizing {ClassName}** — {N} public methods, {M} dependencies
+   > Methods: `updateQuality()`, `toString()`, ...
+
+## Phase 1 — Check for ApprovalTests Dependency
+
+1. Check if `com.approvaltests:approvaltests` is in pom.xml / build.gradle:
+   ```bash
+   grep -q "approvaltests" pom.xml 2>/dev/null
+   ```
+
+2. **If not present**, add it:
+   - Maven: add to `<dependencies>` in pom.xml:
+     ```xml
+     <dependency>
+       <groupId>com.approvaltests</groupId>
+       <artifactId>approvaltests</artifactId>
+       <version>24.9.0</version>
+       <scope>test</scope>
+     </dependency>
+     ```
+   - Gradle: add `testImplementation("com.approvaltests:approvaltests:24.9.0")`
+
+3. Verify it resolves:
+   ```bash
+   mvn dependency:resolve -q  # or ./gradlew dependencies --configuration testCompileClasspath -q
+   ```
+
+## Phase 2 — Write Characterization Tests
+
+### Strategy: Combination Approval Testing
+
+For each public method, use `CombinationApprovals.verifyAllCombinations()` to test across all interesting input combinations.
+
+1. **Identify input dimensions** for each method:
+   - Constructor args / object state that varies
+   - Method parameters
+   - For each dimension, pick values: typical, boundary, null/empty, special cases from the code
+
+2. **Create the test class**: `{ClassName}CharacterizationTest.java` in the test directory.
+
+3. **Write combination approval tests:**
 
 ```java
-@Test
-void characterize_calculatePrice() {
-    String[] customerTypes = {"regular", "premium", "employee"};
-    Integer[] quantities = {0, 1, 5, 100};
-    Double[] unitPrices = {0.0, 9.99, 99.99};
+import org.approvaltests.combinations.CombinationApprovals;
+import org.junit.jupiter.api.Test;
 
-    CombinationApprovals.verifyAllCombinations(
-        (type, qty, price) -> {
-            PriceCalculator calc = new PriceCalculator();
-            return String.valueOf(calc.calculate(type, qty, price));
-        },
-        customerTypes, quantities, unitPrices
-    );
+class GildedRoseCharacterizationTest {
+
+    @Test
+    void characterize_updateQuality() {
+        String[] names = {"Aged Brie", "Backstage passes to a TAFKAL80ETC concert",
+                          "Sulfuras, Hand of Ragnaros", "Normal Item"};
+        Integer[] sellIns = {-1, 0, 1, 5, 10, 11};
+        Integer[] qualities = {0, 1, 2, 48, 49, 50};
+
+        CombinationApprovals.verifyAllCombinations(
+            (name, sellIn, quality) -> {
+                Item[] items = new Item[]{new Item(name, sellIn, quality)};
+                GildedRose app = new GildedRose(items);
+                app.updateQuality();
+                return String.format("sellIn=%d, quality=%d", items[0].sellIn, items[0].quality);
+            },
+            names, sellIns, qualities
+        );
+    }
 }
 ```
 
-This generates 3 × 4 × 3 = 36 test cases in one method. The approved file shows every combination and its result.
+4. **Key principles for choosing input values:**
+   - Read the code for magic numbers, string comparisons, boundary checks — use those exact values
+   - Always include boundary +/-1 (e.g., if code checks `> 0`, test with `-1, 0, 1`)
+   - Include null/empty where the type allows it and code doesn't obviously reject it
+   - For strings compared with `.equals()`, include the exact strings from the code
+   - Keep combinations manageable — 3-5 values per dimension, not exhaustive
 
-### Choosing Input Values
+5. **For methods with side effects** (void methods, state changes):
+   - Capture the object state after the call
+   - Return a string representation of the relevant state
+   - Example: `return obj.toString()` or `return String.format("field1=%s, field2=%d", obj.field1, obj.field2)`
 
-Read the source code to find interesting values:
+6. **For methods with dependencies** (if seams exist from `/find-seam`):
+   - Use simple test doubles via the seams (subclass and override, or pass mocks via parameterized constructor)
+   - Keep doubles minimal — just return fixed values
 
-1. **Boundary values**: If code checks `quantity > 10`, test 9, 10, 11
-2. **Magic strings**: If code compares `name.equals("Aged Brie")`, include that exact string
-3. **Zero/null/empty**: The universal edge cases
-4. **Domain extremes**: Min/max values the code handles (e.g., quality 0 and 50 in Gilded Rose)
-5. **Special cases**: Values that trigger different branches
+## Phase 3 — Run and Approve
 
-### Handling State Changes
+1. Run the characterization tests (they will fail on first run — no approved file yet):
+   ```bash
+   mvn test -pl . -Dtest={TestClassName} -DfailIfNoTests=false 2>&1 | tail -5
+   ```
 
-For void methods or methods with side effects, capture the state after:
+2. The first run creates a `.received.txt` file. This captures actual behavior.
 
-```java
-CombinationApprovals.verifyAllCombinations(
-    (name, sellIn, quality) -> {
-        Item item = new Item(name, sellIn, quality);
-        GildedRose app = new GildedRose(new Item[]{item});
-        app.updateQuality();
-        return String.format("sellIn=%d, quality=%d", item.sellIn, item.quality);
-    },
-    names, sellIns, qualities
-);
-```
+3. **Approve the output** — copy received to approved:
+   ```bash
+   find . -name "*.received.txt" -exec sh -c 'cp "$1" "${1%.received.txt}.approved.txt"' _ {} \;
+   ```
 
-### Handling Non-Determinism
+4. Run tests again — they should now pass:
+   ```bash
+   mvn test -pl . -Dtest={TestClassName}
+   ```
 
-If code uses timestamps, random numbers, or system state:
-1. Use seams (from `/find-seam`) to control the non-deterministic input
-2. Or scrub the output: replace timestamps with `[TIMESTAMP]` before verification
+5. If tests fail after approval, investigate: non-determinism (timestamps, random), ordering issues, or environment dependencies. Fix the test to be deterministic.
 
-## Workflow
+## Phase 4 — Verify Coverage & Commit
 
-1. `/find-seam` — make the code testable (if needed)
-2. `/characterize` — pin current behavior with combination approval tests
-3. Refactor with confidence — any behavior change breaks a test
-4. `/mutate` — strengthen the test suite by killing surviving mutations
+1. Check that the characterization tests cover the main code paths. Quick sanity check:
+   - Every public method should have at least one combination test
+   - Every branch-relevant value from the source should appear in the test inputs
 
-## Tips
+2. Print summary:
+   > **Characterization tests for {ClassName}:**
+   > - `characterize_updateQuality()` — 4 names x 6 sellIns x 6 qualities = 144 combinations
+   > - All approved. Tests pass.
+   >
+   > Run `/mutate` to find remaining test gaps.
 
-- **Approve immediately.** The first run output IS the approved output — you're documenting reality.
-- **Commit approved files.** They're part of your test suite.
-- **Add `*.received.txt` to `.gitignore`.** These are transient.
-- **One test per public method.** Use combinations to cover breadth.
-- **Don't judge the output.** If the code returns wrong results for edge cases, that's what the characterization test captures. Fix bugs later, after you have the safety net.
+3. Auto-commit:
+   ```bash
+   git add <test-file> <approved-files>
+   git commit -m "test: add characterization tests for <ClassName>"
+   ```
+
+## Important Rules
+
+- **Pin actual behavior, not expected behavior.** If the code has a bug, the characterization test captures the bug. That's correct — you're documenting reality.
+- **Never modify production code.** Characterization tests only add test files.
+- **Use CombinationApprovals** as the default approach. Only fall back to simple `Approvals.verify()` for methods with no meaningful input variation.
+- **Approve the first run output.** Don't hand-craft approved files — let the code tell you what it does.
+- **Keep test inputs derived from the source code.** Read the conditionals, magic values, and boundaries in the code — those become your test values.
+- **Commit approved files with the tests.** They are part of the test suite.
+
+## Reference
+
+See `references/approvaltests-patterns.md` for ApprovalTests recipes and patterns.
